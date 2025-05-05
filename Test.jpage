@@ -259,3 +259,66 @@ public class UploadController {
 
 
 
+
+private void traverse(Element element, String parentId, List<SchemaNode> nodes) {
+    NodeList children = element.getChildNodes();
+
+    for (int i = 0; i < children.getLength(); i++) {
+        Node node = children.item(i);
+        if (!(node instanceof Element child)) continue;
+
+        String tag = child.getLocalName();
+        if (tag == null) continue;
+
+        String id = "n" + (++idCounter);
+        String name = child.getAttribute("name");
+        if (name == null || name.isEmpty()) name = tag;
+
+        String type = child.getAttribute("type");
+        String base = child.getAttribute("base");
+        String minOccurs = child.getAttribute("minOccurs");
+        String maxOccurs = child.getAttribute("maxOccurs");
+
+        boolean isComplex = tag.equals("complexType") || tag.equals("sequence") || tag.equals("choice") || tag.equals("group");
+        String documentation = extractDocumentation(child);
+        String restrictions = extractRestrictions(child);
+
+        String dataType = !type.isEmpty() ? type : base;
+        if (!restrictions.isEmpty()) dataType += " (" + restrictions + ")";
+
+        SchemaNode schemaNode = new SchemaNode(
+                id, name, tag, dataType, parentId,
+                minOccurs, maxOccurs, isComplex, documentation
+        );
+        nodes.add(schemaNode);
+
+        // --- New: parse attributes under this node ---
+        if (tag.equals("complexType") || tag.equals("element")) {
+            NodeList attrs = child.getElementsByTagNameNS("*", "attribute");
+            for (int j = 0; j < attrs.getLength(); j++) {
+                Element attr = (Element) attrs.item(j);
+                String attrId = "n" + (++idCounter);
+                String attrName = attr.getAttribute("name");
+                String attrType = attr.getAttribute("type");
+                String use = attr.getAttribute("use");
+                String defVal = attr.getAttribute("default");
+                String fixed = attr.getAttribute("fixed");
+
+                String attrData = "type: " + attrType;
+                if (!use.isEmpty()) attrData += ", use: " + use;
+                if (!defVal.isEmpty()) attrData += ", default: " + defVal;
+                if (!fixed.isEmpty()) attrData += ", fixed: " + fixed;
+
+                SchemaNode attrNode = new SchemaNode(
+                        attrId, "@" + attrName, "attribute", attrData,
+                        id, "", "", false, ""
+                );
+                nodes.add(attrNode);
+            }
+        }
+
+        traverse(child, id, nodes); // recursive call
+    }
+}
+
+
