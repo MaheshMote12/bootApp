@@ -322,3 +322,118 @@ private void traverse(Element element, String parentId, List<SchemaNode> nodes) 
 }
 
 
+
+
+
+
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>XSD Tree View</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: sans-serif; }
+        .node circle { fill: #89CFF0; cursor: pointer; }
+        .node text { font: 12px sans-serif; }
+        .node--attribute circle { fill: #f5c542; }
+        .tooltip {
+            position: absolute;
+            background: #eee;
+            padding: 6px;
+            border: 1px solid #aaa;
+            font-size: 12px;
+            pointer-events: none;
+            opacity: 0;
+        }
+    </style>
+</head>
+<body>
+    <h3>XSD Visualizer (Tree View)</h3>
+    <input type="file" id="xsdFile" accept=".xsd"><br>
+    <svg width="1000" height="800"></svg>
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        const svg = d3.select("svg");
+        const tooltip = d3.select("#tooltip");
+
+        const tree = d3.tree().size([800, 700]);
+        const g = svg.append("g").attr("transform", "translate(40,40)");
+
+        document.getElementById("xsdFile").addEventListener("change", async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append("file", file);
+
+            const response = await fetch("/api/upload", { method: "POST", body: formData });
+            const data = await response.json();
+
+            const rootData = buildTreeData(data);
+            renderTree(rootData);
+        });
+
+        function buildTreeData(flatNodes) {
+            const idMap = {};
+            flatNodes.forEach(n => idMap[n.id] = { ...n, children: [] });
+
+            let root = null;
+            flatNodes.forEach(n => {
+                const node = idMap[n.id];
+                if (n.parent) {
+                    idMap[n.parent].children.push(node);
+                } else {
+                    root = node;
+                }
+            });
+            return root;
+        }
+
+        function renderTree(data) {
+            svg.selectAll("*").remove();
+            const root = d3.hierarchy(data);
+            tree(root);
+
+            const link = svg.selectAll(".link")
+                .data(root.links())
+                .enter().append("line")
+                .attr("class", "link")
+                .attr("stroke", "#aaa")
+                .attr("x1", d => d.source.y)
+                .attr("y1", d => d.source.x)
+                .attr("x2", d => d.target.y)
+                .attr("y2", d => d.target.x);
+
+            const node = svg.selectAll(".node")
+                .data(root.descendants())
+                .enter().append("g")
+                .attr("class", d => "node " + (d.data.type === "attribute" ? "node--attribute" : ""))
+                .attr("transform", d => `translate(${d.y},${d.x})`)
+                .on("mouseover", (event, d) => {
+                    tooltip.transition().duration(200).style("opacity", 0.9);
+                    tooltip.html(`
+                        <strong>${d.data.name}</strong><br>
+                        Type: ${d.data.dataType || d.data.type}<br>
+                        ${d.data.documentation || ""}
+                    `).style("left", (event.pageX + 10) + "px")
+                      .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", () => {
+                    tooltip.transition().duration(500).style("opacity", 0);
+                });
+
+            node.append("circle").attr("r", 8);
+            node.append("text")
+                .attr("dx", 12)
+                .attr("dy", 4)
+                .text(d => d.data.name);
+        }
+    </script>
+</body>
+</html>
+
+
