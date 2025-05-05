@@ -437,3 +437,43 @@ private void traverse(Element element, String parentId, List<SchemaNode> nodes) 
 </html>
 
 
+
+
+private final Map<String, Element> groupDefinitions = new HashMap<>();
+
+public List<SchemaNode> parseXsd(InputStream xsdStream) throws Exception {
+    List<SchemaNode> nodes = new ArrayList<>();
+    DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+    factory.setNamespaceAware(true);
+
+    DocumentBuilder builder = factory.newDocumentBuilder();
+    Document doc = builder.parse(xsdStream);
+    Element schemaRoot = doc.getDocumentElement();
+
+    // Step 1: Collect group definitions
+    NodeList allGroups = schemaRoot.getElementsByTagNameNS("*", "group");
+    for (int i = 0; i < allGroups.getLength(); i++) {
+        Element group = (Element) allGroups.item(i);
+        String groupName = group.getAttribute("name");
+        if (!groupName.isEmpty()) {
+            groupDefinitions.put(groupName, group);
+        }
+    }
+
+    // Step 2: Traverse entire schema starting from root
+    traverse(schemaRoot, null, nodes);
+    return nodes;
+}
+
+
+if (tag.equals("group") && child.hasAttribute("ref")) {
+    String refName = child.getAttribute("ref");
+    Element referenced = groupDefinitions.get(refName);
+    if (referenced != null) {
+        traverse(referenced, parentId, nodes);
+    } else {
+        System.err.println("Warning: Unresolved group ref: " + refName);
+    }
+    continue; // Skip adding this node directly
+}
+
