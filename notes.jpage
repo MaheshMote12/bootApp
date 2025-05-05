@@ -1,0 +1,269 @@
+package com.example.xsdviewer;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class XsdVisualizerApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(XsdVisualizerApplication.class, args);
+    }
+}
+
+
+
+package com.example.xsdviewer.controller;
+
+import com.example.xsdviewer.model.SchemaNode;
+import com.example.xsdviewer.service.XsdParserService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
+
+@Controller
+public class XsdController {
+
+    @Autowired
+    private XsdParserService parserService;
+
+    @PostMapping("/upload")
+    public String handleFileUpload(@RequestParam("file") MultipartFile file, Model model) throws Exception {
+        List<SchemaNode> nodes = parserService.parseXsd(file.getInputStream());
+        ObjectMapper mapper = new ObjectMapper();
+        model.addAttribute("jsonData", mapper.writeValueAsString(nodes));
+        return "diagram";
+    }
+
+    @GetMapping("/")
+    public String index() {
+        return "index";
+    }
+}
+
+
+package com.example.xsdviewer.service;
+
+import com.example.xsdviewer.model.SchemaNode;
+import org.springframework.stereotype.Service;
+import org.w3c.dom.*;
+import javax.xml.parsers.*;
+import java.io.InputStream;
+import java.util.*;
+
+@Service
+public class XsdParserService {
+
+    private int idCounter = 0;
+
+    public List<SchemaNode> parseXsd(InputStream inputStream) throws Exception {
+        List<SchemaNode> nodes = new ArrayList<>();
+        Map<String, SchemaNode> idMap = new HashMap<>();
+
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        Document doc = factory.newDocumentBuilder().parse(inputStream);
+        Element root = doc.getDocumentElement();
+
+        traverse(root, null, nodes, idMap);
+
+        return nodes;
+    }
+
+    private void traverse(Element element, String parentId, List<SchemaNode> nodes, Map<String, SchemaNode> idMap) {
+        NodeList children = element.getChildNodes();
+
+        for (int i = 0; i < children.getLength(); i++) {
+            Node n = children.item(i);
+            if (!(n instanceof Element)) continue;
+
+            Element child = (Element) n;
+            if (child.getTagName().contains("element")) {
+                String name = child.getAttribute("name");
+                String type = child.getAttribute("type");
+                String min = child.getAttribute("minOccurs");
+                String max = child.getAttribute("maxOccurs");
+
+                if (name.isEmpty()) continue;
+
+                String id = "n" + (++idCounter);
+                String label = name + (!type.isEmpty() ? " (" + type + ")" : " (complexType)");
+                if (!min.isEmpty() || !max.isEmpty()) {
+                    label += " [" + "min=" + (min.isEmpty() ? "1" : min) + ", max=" + (max.isEmpty() ? "1" : max) + "]";
+                }
+
+                SchemaNode node = new SchemaNode(id, label, parentId);
+                nodes.add(node);
+                idMap.put(id, node);
+
+                traverse(child, id, nodes, idMap);
+            } else {
+                traverse(child, parentId, nodes, idMap);
+            }
+        }
+    }
+}
+
+
+package com.example.xsdviewer.model;
+
+public class SchemaNode {
+    public String id;
+    public String label;
+    public String parent;
+
+    public SchemaNode(String id, String label, String parent) {
+        this.id = id;
+        this.label = label;
+        this.parent = parent;
+    }
+}
+
+
+
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>XSD Upload</title>
+</head>
+<body>
+    <h1>Upload XSD File</h1>
+    <form method="post" enctype="multipart/form-data" action="/upload">
+        <input type="file" name="file"/>
+        <button type="submit">Upload</button>
+    </form>
+</body>
+</html>
+
+
+
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>XSD Diagram</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        .node { cursor: move; fill: #90cdf4; stroke: #3182bd; stroke-width: 1.5px; }
+        .link { stroke: #999; stroke-opacity: 0.6; }
+        text { font: 12px sans-serif; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <h1>Schema Visualization</h1>
+    <svg width="1000" height="800"></svg>
+
+    <script th:inline="javascript">
+        const data = [[${jsonData}]];
+        const nodes = data.map(d => ({ id: d.id, label: d.label }));
+        const links = data.filter(d => d.parent).map(d => ({ source: d.parent, target: d.id }));
+
+        const svg = d3.select("svg");
+        const simulation = d3.forceSimulation(nodes)
+            .force("link", d3.forceLink(links).id(d => d.id).distance(120))
+            .force("charge", d3.forceManyBody().strength(-500))
+            .force("center", d3.forceCenter(500, 400));
+
+        const link = svg.append("g")
+            .attr("stroke", "#999")
+            .selectAll("line")
+            .data(links)
+            .join("line")
+            .attr("class", "link");
+
+        const node = svg.append("g")
+            .selectAll("circle")
+            .data(nodes)
+            .join("circle")
+            .attr("r", 30)
+            .attr("class", "node")
+            .call(drag(simulation));
+
+        const label = svg.append("g")
+            .selectAll("text")
+            .data(nodes)
+            .join("text")
+            .text(d => d.label)
+            .attr("text-anchor", "middle");
+
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+
+            label
+                .attr("x", d => d.x)
+                .attr("y", d => d.y + 5);
+        });
+
+        function drag(simulation) {
+            return d3.drag()
+                .on("start", (event, d) => {
+                    if (!event.active) simulation.alphaTarget(0.3).restart();
+                    d.fx = d.x;
+                    d.fy = d.y;
+                })
+                .on("drag", (event, d) => {
+                    d.fx = event.x;
+                    d.fy = event.y;
+                })
+                .on("end", (event, d) => {
+                    if (!event.active) simulation.alphaTarget(0);
+                    d.fx = null;
+                    d.fy = null;
+                });
+        }
+    </script>
+</body>
+</html>
+
+
+
+
+spring.servlet.multipart.max-file-size=5MB
+spring.servlet.multipart.max-request-size=5MB
+
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" ...>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>xsd-visualizer</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-thymeleaf</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+
+
+
