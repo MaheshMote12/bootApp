@@ -1,0 +1,239 @@
+package com.example.xsdviewer.service;
+
+import com.example.xsdviewer.model.SchemaNode;
+import org.springframework.stereotype.Service;
+import org.w3c.dom.*;
+
+import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
+
+@Service
+public class XsdParserService {
+
+    private int idCounter = 0;
+
+    public List<SchemaNode> parseXsd(InputStream inputStream) throws Exception {
+        List<SchemaNode> nodes = new ArrayList<>();
+        Document doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(inputStream);
+        Element root = doc.getDocumentElement();
+        traverse(root, null, nodes);
+        return nodes;
+    }
+
+    private void traverse(Element element, String parentId, List<SchemaNode> nodes) {
+        NodeList children = element.getChildNodes();
+
+        for (int i = 0; i < children.getLength(); i++) {
+            Node node = children.item(i);
+            if (!(node instanceof Element child)) continue;
+
+            String tag = child.getLocalName();
+            if (tag == null) continue;
+
+            String id = "n" + (++idCounter);
+            String name = child.getAttribute("name");
+            if (name == null || name.isEmpty()) name = tag;
+
+            String type = child.getAttribute("type");
+            String base = child.getAttribute("base");
+            String minOccurs = child.getAttribute("minOccurs");
+            String maxOccurs = child.getAttribute("maxOccurs");
+
+            boolean isComplex = tag.equals("complexType") || tag.equals("sequence") || tag.equals("choice") || tag.equals("group");
+            String documentation = extractDocumentation(child);
+            String restrictions = extractRestrictions(child);
+
+            String dataType = !type.isEmpty() ? type : base;
+            if (!restrictions.isEmpty()) dataType += " (" + restrictions + ")";
+
+            SchemaNode schemaNode = new SchemaNode(
+                    id, name, tag, dataType, parentId,
+                    minOccurs, maxOccurs, isComplex, documentation
+            );
+            nodes.add(schemaNode);
+
+            traverse(child, id, nodes); // recursive
+        }
+    }
+
+    private String extractDocumentation(Element element) {
+        NodeList annotations = element.getElementsByTagNameNS("*", "documentation");
+        if (annotations.getLength() > 0) {
+            return annotations.item(0).getTextContent().trim();
+        }
+        return "";
+    }
+
+    private String extractRestrictions(Element element) {
+        StringBuilder sb = new StringBuilder();
+        NodeList children = element.getChildNodes();
+
+        for (int i = 0; i < children.getLength(); i++) {
+            Node node = children.item(i);
+            if (!(node instanceof Element child)) continue;
+
+            String tag = child.getLocalName();
+            if ("restriction".equals(tag)) {
+                NamedNodeMap attrs = child.getAttributes();
+                for (int j = 0; j < attrs.getLength(); j++) {
+                    Node attr = attrs.item(j);
+                    if (attr.getNodeName().equals("base")) {
+                        sb.append("base: ").append(attr.getNodeValue()).append(" ");
+                    }
+                }
+
+                NodeList restrictionChildren = child.getChildNodes();
+                for (int j = 0; j < restrictionChildren.getLength(); j++) {
+                    Node rc = restrictionChildren.item(j);
+                    if (!(rc instanceof Element rce)) continue;
+
+                    String rTag = rce.getLocalName();
+                    String val = rce.getAttribute("value");
+                    sb.append(rTag).append(": ").append(val).append(" ");
+                }
+            }
+        }
+
+        return sb.toString().trim();
+    }
+}
+
+
+package com.example.xsdviewer.model;
+
+public class SchemaNode {
+    public String id;
+    public String name;
+    public String type;
+    public String dataType;
+    public String parent;
+    public String minOccurs;
+    public String maxOccurs;
+    public boolean isComplex;
+    public String documentation;
+
+    public SchemaNode(String id, String name, String type, String dataType,
+                      String parent, String minOccurs, String maxOccurs,
+                      boolean isComplex, String documentation) {
+        this.id = id;
+        this.name = name;
+        this.type = type;
+        this.dataType = dataType;
+        this.parent = parent;
+        this.minOccurs = minOccurs;
+        this.maxOccurs = maxOccurs;
+        this.isComplex = isComplex;
+        this.documentation = documentation;
+    }
+}
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>XSD Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        svg { width: 100%; height: 100vh; border: 1px solid #ccc; }
+        .node circle { stroke: #333; stroke-width: 1.5px; }
+        .tooltip {
+            position: absolute;
+            text-align: left;
+            padding: 8px;
+            background: #eee;
+            border: 1px solid #aaa;
+            font-size: 12px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <input type="file" id="xsdFile" accept=".xsd"><br>
+    <svg></svg>
+    <script>
+        const svg = d3.select("svg");
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const tooltip = d3.select("body").append("div").attr("class", "tooltip").style("opacity", 0);
+
+        document.getElementById("xsdFile").addEventListener("change", async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append("file", file);
+
+            const response = await fetch("/api/upload", { method: "POST", body: formData });
+            const data = await response.json();
+
+            const nodes = data.map(d => ({ id: d.id, label: d.name + " (" + d.type + ")", ...d }));
+            const links = data.filter(d => d.parent).map(d => ({ source: d.parent, target: d.id }));
+
+            svg.selectAll("*").remove();
+
+            const simulation = d3.forceSimulation(nodes)
+                .force("link", d3.forceLink(links).id(d => d.id).distance(150))
+                .force("charge", d3.forceManyBody().strength(-500))
+                .force("center", d3.forceCenter(width / 2, height / 2));
+
+            const link = svg.append("g").selectAll("line")
+                .data(links).enter().append("line")
+                .attr("stroke", "#999");
+
+            const node = svg.append("g").selectAll("g")
+                .data(nodes).enter().append("g")
+                .call(d3.drag()
+                    .on("start", dragstarted)
+                    .on("drag", dragged)
+                    .on("end", dragended));
+
+            node.append("circle")
+                .attr("r", 30)
+                .attr("fill", d => d.isComplex ? "#8fd3f4" : "#f0b27a")
+                .on("mouseover", (event, d) => {
+                    tooltip.transition().duration(200).style("opacity", .9);
+                    tooltip.html(`<b>${d.name}</b><br>Type: ${d.dataType || d.type}<br>${d.documentation || ''}`)
+                           .style("left", (event.pageX + 10) + "px")
+                           .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", () => tooltip.transition().duration(500).style("opacity", 0));
+
+            node.append("text")
+                .text(d => d.label)
+                .attr("x", -20)
+                .attr("y", 5)
+                .style("font-size", "10px");
+
+            simulation.on("tick", () => {
+                link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+
+                node.attr("transform", d => `translate(${d.x},${d.y})`);
+            });
+
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+        });
+    </script>
+</body>
+</html>
+
+
