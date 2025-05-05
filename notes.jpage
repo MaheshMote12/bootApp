@@ -267,3 +267,93 @@ spring.servlet.multipart.max-request-size=5MB
 
 
 
+
+package com.example.xsdviewer.model;
+
+public class SchemaNode {
+    public String id;
+    public String name;
+    public String type;      // XSD node type: element, complexType, sequence, etc.
+    public String dataType;  // XML schema type: xs:string, xs:int, etc.
+    public String parent;
+    public String minOccurs;
+    public String maxOccurs;
+    public boolean isComplex;
+    public String documentation;
+
+    public SchemaNode(String id, String name, String type, String dataType,
+                      String parent, String minOccurs, String maxOccurs,
+                      boolean isComplex, String documentation) {
+        this.id = id;
+        this.name = name;
+        this.type = type;
+        this.dataType = dataType;
+        this.parent = parent;
+        this.minOccurs = minOccurs;
+        this.maxOccurs = maxOccurs;
+        this.isComplex = isComplex;
+        this.documentation = documentation;
+    }
+}
+
+
+public List<SchemaNode> parseXsd(InputStream inputStream) throws Exception {
+    List<SchemaNode> nodes = new ArrayList<>();
+    DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+    factory.setNamespaceAware(true);
+    Document doc = factory.newDocumentBuilder().parse(inputStream);
+
+    Element root = doc.getDocumentElement();
+    traverse(root, null, nodes);
+    return nodes;
+}
+
+private void traverse(Element element, String parentId, List<SchemaNode> nodes) {
+    NodeList children = element.getChildNodes();
+
+    for (int i = 0; i < children.getLength(); i++) {
+        Node n = children.item(i);
+        if (!(n instanceof Element child)) continue;
+
+        String tag = child.getLocalName();
+        if (tag == null) continue;
+
+        String id = "n" + (++idCounter);
+        String name = child.getAttribute("name");
+        String typeAttr = child.getAttribute("type");
+        String minOccurs = child.getAttribute("minOccurs");
+        String maxOccurs = child.getAttribute("maxOccurs");
+        boolean isComplex = tag.equals("complexType") || tag.equals("sequence") || tag.equals("choice");
+        String doc = extractDocumentation(child);
+
+        // fallback name if missing
+        if (name.isEmpty()) name = tag;
+
+        SchemaNode node = new SchemaNode(
+            id,
+            name,
+            tag,
+            typeAttr,
+            parentId,
+            minOccurs,
+            maxOccurs,
+            isComplex,
+            doc
+        );
+        nodes.add(node);
+
+        traverse(child, id, nodes); // Recursively process nested nodes
+    }
+}
+
+// Optional: extract <xs:documentation> content
+private String extractDocumentation(Element element) {
+    NodeList annotations = element.getElementsByTagNameNS("*", "documentation");
+    if (annotations.getLength() > 0) {
+        return annotations.item(0).getTextContent().trim();
+    }
+    return null;
+}
+
+
+
