@@ -66,3 +66,45 @@ DB --> QR : QR code data
 QR -> App : 200 OK\nQR metadata + image
 
 @enduml
+
+
+
+
+use case diagram 
+
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+
+actor "Admin" as Admin
+actor "External App" as App
+actor "End User" as User
+
+rectangle "QR Code Service" {
+  
+  (Register Client App) as UC1
+  (Request Token with user_id) as UC2
+  (Generate QR Code) as UC3
+  (Retrieve QR Code) as UC4
+  (Store QR Code per client and user) as UC5
+  (Validate Access Token) as UC6
+  (Manage Clients and Limits) as UC7
+
+  Admin --> UC1
+  Admin --> UC7
+
+  App --> UC2
+  App --> UC3
+  App --> UC4
+
+  UC3 --> UC5
+  UC4 --> UC5
+  UC2 --> UC6
+  UC3 --> UC6
+  UC4 --> UC6
+
+  User --> App : uses client app
+}
+
+@enduml
+
