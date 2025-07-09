@@ -1,0 +1,68 @@
+@startuml
+actor "External User" as User
+participant "Consumer App" as App
+participant "Auth Server" as Auth
+participant "QR API Service" as QR
+database "QR DB" as DB
+
+== Token Request with User ID ==
+User -> App : Logs in or initiates action
+App -> Auth : POST /oauth2/token\n(grant_type=client_credentials,\nclient_id, client_secret,\nuser_id=alice123)
+Auth -> Auth : Validate client credentials
+Auth -> Auth : Add user_id to JWT claims
+Auth -> App : 200 OK\n{ access_token (JWT with client_id + user_id) }
+
+== QR Code Generation ==
+App -> QR : POST /qr/generate\nAuthorization: Bearer token\nBody: { data only }
+QR -> QR : Decode token\nExtract client_id and user_id
+QR -> DB : Store QR with\nclient_id + user_id + data
+DB --> QR : QR ID
+
+QR -> App : 201 Created\n{ qr_id }
+
+== QR Retrieval ==
+App -> QR : GET /qr/{qr_id}\nAuthorization: Bearer token
+QR -> QR : Decode token\nValidate client_id + user_id
+QR -> DB : Fetch QR by id
+DB --> QR : QR data
+QR -> App : 200 OK\nQR metadata
+
+@enduml
+
+
+
+
+
+
+
+
+@startuml
+actor Developer as Dev
+participant "Consumer App" as App
+participant "Auth Server" as Auth
+participant "QR API Service" as QR
+database "QR DB" as DB
+
+Dev -> App : Configured with client_id & secret
+
+== Token Request ==
+App -> Auth : POST /oauth2/token\n(client_id, client_secret, grant_type=client_credentials)
+Auth -> App : 200 OK\n{ access_token (JWT with client_id) }
+
+== QR Generation ==
+App -> QR : POST /qr/generate\nAuthorization: Bearer token\nBody: { user_id, data }
+QR -> QR : Validate token & extract client_id
+QR -> QR : Validate input & user_id
+QR -> DB : Store QR code with\nclient_id + user_id + qr_data
+DB --> QR : QR ID
+
+QR -> App : 201 Created\n{ qr_id }
+
+== Optional QR Lookup ==
+App -> QR : GET /qr/{qr_id}\nAuthorization: Bearer token
+QR -> QR : Validate token & ensure\nclient_id owns this qr_id
+QR -> DB : Fetch QR code by id
+DB --> QR : QR code data
+QR -> App : 200 OK\nQR metadata + image
+
+@enduml
