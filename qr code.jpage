@@ -1,0 +1,110 @@
+// File: QrCodeGenerator.java
+
+import com.google.zxing.*;
+import com.google.zxing.client.j2se.MatrixToImageConfig;
+import com.google.zxing.client.j2se.MatrixToImageWriter;
+import com.google.zxing.common.BitMatrix;
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
+import org.apache.commons.codec.binary.Base64;
+
+import javax.imageio.ImageIO;
+import java.awt.*;
+import java.awt.image.BufferedImage;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
+
+public class QrCodeGenerator {
+
+    public static BufferedImage generateQRImage(String content, int width, int height) throws WriterException {
+        Map<EncodeHintType, Object> hints = new HashMap<>();
+        hints.put(EncodeHintType.CHARACTER_SET, StandardCharsets.UTF_8.name());
+        hints.put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.H);
+        hints.put(EncodeHintType.MARGIN, 1);
+
+        BitMatrix matrix = new MultiFormatWriter().encode(content, BarcodeFormat.QR_CODE, width, height, hints);
+        return MatrixToImageWriter.toBufferedImage(matrix, new MatrixToImageConfig());
+    }
+
+    public static BufferedImage embedLogo(BufferedImage qrImage, BufferedImage logo) {
+        int qrWidth = qrImage.getWidth();
+        int qrHeight = qrImage.getHeight();
+
+        BufferedImage combined = new BufferedImage(qrWidth, qrHeight, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = combined.createGraphics();
+
+        g.drawImage(qrImage, 0, 0, null);
+
+        int logoSize = qrWidth / 5;
+        int x = (qrWidth - logoSize) / 2;
+        int y = (qrHeight - logoSize) / 2;
+
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.drawImage(logo.getScaledInstance(logoSize, logoSize, Image.SCALE_SMOOTH), x, y, null);
+        g.dispose();
+
+        return combined;
+    }
+
+    public static void saveImageToFile(BufferedImage image, String format, Path path) throws IOException {
+        ImageIO.write(image, format, path.toFile());
+    }
+
+    public static String generateSVG(String content, int size) throws WriterException {
+        Map<EncodeHintType, Object> hints = new HashMap<>();
+        hints.put(EncodeHintType.CHARACTER_SET, "UTF-8");
+        hints.put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.H);
+        hints.put(EncodeHintType.MARGIN, 0);
+
+        BitMatrix matrix = new MultiFormatWriter().encode(content, BarcodeFormat.QR_CODE, size, size, hints);
+        StringBuilder svg = new StringBuilder();
+        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 ")
+           .append(size).append(" ").append(size).append("\" shape-rendering=\"crispEdges\">");
+
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                if (matrix.get(x, y)) {
+                    svg.append("<rect x=\"").append(x)
+                       .append("\" y=\"").append(y)
+                       .append("\" width=\"1\" height=\"1\" fill=\"#000\"/>");
+                }
+            }
+        }
+        svg.append("</svg>");
+        return svg.toString();
+    }
+
+    public static String toBase64Png(BufferedImage image) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        ImageIO.write(image, "PNG", baos);
+        return Base64.encodeBase64String(baos.toByteArray());
+    }
+
+    public static void main(String[] args) throws Exception {
+        String content = "https://example.com/user?id=123456";
+        int size = 300;
+
+        // Step 1: Generate QR
+        BufferedImage qr = generateQRImage(content, size, size);
+
+        // Step 2: Embed Logo
+        BufferedImage logo = ImageIO.read(new File("logo.png")); // path to your logo
+        BufferedImage finalImage = embedLogo(qr, logo);
+
+        // Step 3: Save PNG
+        saveImageToFile(finalImage, "PNG", Path.of("qrcode_with_logo.png"));
+
+        // Step 4: Export SVG
+        String svg = generateSVG(content, size);
+        try (PrintWriter writer = new PrintWriter("qrcode.svg")) {
+            writer.write(svg);
+        }
+
+        // Step 5: Base64 PNG
+        String base64 = toBase64Png(finalImage);
+        System.out.println("Base64 Image (PNG):");
+        System.out.println("data:image/png;base64," + base64);
+    }
+}
