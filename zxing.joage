@@ -1,0 +1,120 @@
+// File: QrCliGenerator.java
+
+import com.google.zxing.*;
+import com.google.zxing.client.j2se.MatrixToImageConfig;
+import com.google.zxing.client.j2se.MatrixToImageWriter;
+import com.google.zxing.common.BitMatrix;
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
+import org.apache.commons.codec.binary.Base64;
+
+import javax.imageio.ImageIO;
+import java.awt.*;
+import java.awt.image.BufferedImage;
+import java.io.*;
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
+
+public class QrCliGenerator {
+
+    public static BufferedImage generateQR(String content, int width, int height, int fgColor, int bgColor) throws WriterException {
+        Map<EncodeHintType, Object> hints = new HashMap<>();
+        hints.put(EncodeHintType.CHARACTER_SET, "UTF-8");
+        hints.put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.H);
+        hints.put(EncodeHintType.MARGIN, 1);
+
+        BitMatrix matrix = new MultiFormatWriter().encode(content, BarcodeFormat.QR_CODE, width, height, hints);
+        MatrixToImageConfig config = new MatrixToImageConfig(fgColor, bgColor);
+        return MatrixToImageWriter.toBufferedImage(matrix, config);
+    }
+
+    public static BufferedImage embedLogo(BufferedImage qr, String logoPath) throws IOException {
+        BufferedImage logo = ImageIO.read(new File(logoPath));
+        int size = qr.getWidth() / 5;
+        int x = (qr.getWidth() - size) / 2;
+        int y = (qr.getHeight() - size) / 2;
+
+        Graphics2D g = qr.createGraphics();
+        g.drawImage(logo.getScaledInstance(size, size, Image.SCALE_SMOOTH), x, y, null);
+        g.dispose();
+        return qr;
+    }
+
+    public static String generateSvg(String content, int size) throws WriterException {
+        Map<EncodeHintType, Object> hints = new HashMap<>();
+        hints.put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.H);
+        hints.put(EncodeHintType.MARGIN, 0);
+        BitMatrix matrix = new MultiFormatWriter().encode(content, BarcodeFormat.QR_CODE, size, size, hints);
+
+        StringBuilder svg = new StringBuilder();
+        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 ")
+                .append(size).append(" ").append(size)
+                .append("\" shape-rendering=\"crispEdges\">");
+
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                if (matrix.get(x, y)) {
+                    svg.append("<rect x=\"").append(x)
+                            .append("\" y=\"").append(y)
+                            .append("\" width=\"1\" height=\"1\" fill=\"black\"/>");
+                }
+            }
+        }
+        svg.append("</svg>");
+        return svg.toString();
+    }
+
+    public static String toBase64(BufferedImage image) throws IOException {
+        ByteArrayOutputStream os = new ByteArrayOutputStream();
+        ImageIO.write(image, "PNG", os);
+        return Base64.encodeBase64String(os.toByteArray());
+    }
+
+    public static int hexToRgb(String hexColor) {
+        return Color.decode(hexColor).getRGB();
+    }
+
+    public static void main(String[] args) throws Exception {
+        if (args.length < 6) {
+            System.out.println("Usage: java QrCliGenerator <content> <WIDTHxHEIGHT> <logoPath|none> <fgColor> <bgColor> <format:png|svg|base64>");
+            return;
+        }
+
+        String content = args[0];
+        String[] size = args[1].toLowerCase().split("x");
+        int width = Integer.parseInt(size[0]);
+        int height = Integer.parseInt(size[1]);
+        String logoPath = args[2];
+        int fgColor = hexToRgb(args[3]);
+        int bgColor = hexToRgb(args[4]);
+        String format = args[5].toLowerCase();
+
+        switch (format) {
+            case "png" -> {
+                BufferedImage qr = generateQR(content, width, height, fgColor, bgColor);
+                if (!"none".equalsIgnoreCase(logoPath)) {
+                    qr = embedLogo(qr, logoPath);
+                }
+                ImageIO.write(qr, "PNG", new File("qrcode.png"));
+                System.out.println("✅ PNG saved as qrcode.png");
+            }
+            case "svg" -> {
+                String svg = generateSvg(content, width);
+                try (PrintWriter out = new PrintWriter("qrcode.svg")) {
+                    out.write(svg);
+                }
+                System.out.println("✅ SVG saved as qrcode.svg");
+            }
+            case "base64" -> {
+                BufferedImage qr = generateQR(content, width, height, fgColor, bgColor);
+                if (!"none".equalsIgnoreCase(logoPath)) {
+                    qr = embedLogo(qr, logoPath);
+                }
+                String base64 = toBase64(qr);
+                System.out.println("✅ Base64 PNG:");
+                System.out.println("data:image/png;base64," + base64);
+            }
+            default -> System.out.println("❌ Unsupported format: " + format);
+        }
+    }
+}
