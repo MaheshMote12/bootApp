@@ -1,0 +1,127 @@
+// File: src/App.js
+import React, { useState, useRef, useEffect } from "react";
+import { Stage, Layer, Image as KonvaImage } from "react-konva";
+
+const CANVAS_WIDTH = 1024;
+const CANVAS_HEIGHT = 1024;
+const QR_SIZE = 720;
+
+function App() {
+  const [qr, setQr] = useState(null);
+  const [bg, setBg] = useState(null);
+  const bgRef = useRef();
+
+  // Load sample QR image (or replace with upload)
+  useEffect(() => {
+    const img = new window.Image();
+    img.src = "/qr.png"; // put sample qr.png into public/
+    img.onload = () => setQr(img);
+  }, []);
+
+  const handleBgUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const img = new window.Image();
+    img.src = url;
+    img.onload = () => setBg(img);
+  };
+
+  const exportParams = () => {
+    if (!bgRef.current) return;
+
+    const node = bgRef.current;
+    const absPos = node.getAbsolutePosition();
+    const scaleX = node.scaleX();
+    const rotation = node.rotation();
+    const opacity = node.opacity();
+
+    const qrX = (CANVAS_WIDTH - QR_SIZE) / 2;
+    const qrY = (CANVAS_HEIGHT - QR_SIZE) / 2;
+
+    // Background dimensions on canvas
+    const w = node.width() * scaleX;
+    const h = node.height() * node.scaleY();
+
+    // Top-left relative to QR box
+    const relX = (absPos.x - qrX) / QR_SIZE;
+    const relY = (absPos.y - qrY) / QR_SIZE;
+    const relW = w / QR_SIZE;
+
+    const params = {
+      canvasWidth: CANVAS_WIDTH,
+      canvasHeight: CANVAS_HEIGHT,
+      qrSizePx: QR_SIZE,
+      transform: {
+        relX,
+        relY,
+        relW,
+        rotation,
+        anchorAx: 0.5,
+        anchorAy: 0.5,
+        opacity,
+      },
+    };
+
+    console.log("Exported params:", params);
+    return params;
+  };
+
+  const handleSubmit = async () => {
+    const params = exportParams();
+    if (!params || !qr || !bg) return;
+
+    const form = new FormData();
+    // here we only have frontend images, but in real app you would upload actual QR file
+    const qrBlob = await fetch(qr.src).then((r) => r.blob());
+    const bgBlob = await fetch(bg.src).then((r) => r.blob());
+
+    form.append("qr", qrBlob, "qr.png");
+    form.append("bg", bgBlob, "bg.png");
+    form.append("params", JSON.stringify(params));
+
+    const res = await fetch("http://localhost:8080/api/compose", {
+      method: "POST",
+      body: form,
+    });
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+  };
+
+  return (
+    <div>
+      <h1>QR + Background Composer</h1>
+      <input type="file" accept="image/*" onChange={handleBgUpload} />
+      <button onClick={handleSubmit}>Send to Backend</button>
+
+      <Stage width={CANVAS_WIDTH} height={CANVAS_HEIGHT} style={{ border: "1px solid black" }}>
+        <Layer>
+          {qr && (
+            <KonvaImage
+              image={qr}
+              x={(CANVAS_WIDTH - QR_SIZE) / 2}
+              y={(CANVAS_HEIGHT - QR_SIZE) / 2}
+              width={QR_SIZE}
+              height={QR_SIZE}
+            />
+          )}
+          {bg && (
+            <KonvaImage
+              image={bg}
+              ref={bgRef}
+              x={CANVAS_WIDTH / 2 - bg.width / 4}
+              y={CANVAS_HEIGHT / 2 - bg.height / 4}
+              width={bg.width / 2}
+              height={bg.height / 2}
+              draggable
+            />
+          )}
+        </Layer>
+      </Stage>
+    </div>
+  );
+}
+
+export default App;
