@@ -6,6 +6,10 @@ const CANVAS_WIDTH = 1024;
 const CANVAS_HEIGHT = 1024;
 const QR_SIZE = 720;
 
+// Public QR sample
+const QR_URL =
+  "https://api.qrserver.com/v1/create-qr-code/?size=720x720&data=HelloWorld";
+
 function App() {
   const [qr, setQr] = useState(null);
   const [bg, setBg] = useState(null);
@@ -14,10 +18,11 @@ function App() {
   const bgRef = useRef();
   const trRef = useRef();
 
-  // Load sample QR image (put qr.png into public/)
+  // Load QR from public API
   useEffect(() => {
     const img = new window.Image();
-    img.src = process.env.PUBLIC_URL + "/qr.png";
+    img.crossOrigin = "Anonymous"; // avoid CORS issues
+    img.src = QR_URL;
     img.onload = () => setQr(img);
   }, []);
 
@@ -64,7 +69,7 @@ function App() {
     };
   };
 
-  // Keep JSON live updated
+  // Keep JSON updated
   useEffect(() => {
     const anim = setInterval(() => {
       const p = computeParams();
