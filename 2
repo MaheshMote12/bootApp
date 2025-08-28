@@ -1,0 +1,84 @@
+// File: QrComposer.java
+package com.example.qr;
+
+import javax.imageio.ImageIO;
+import java.awt.*;
+import java.awt.geom.AffineTransform;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.util.Map;
+
+public class QrComposer {
+
+    public static BufferedImage compose(
+            BufferedImage qrImg,
+            BufferedImage bgImg,
+            Map<String, Object> params
+    ) {
+        int canvasW = (int) params.get("canvasWidth");
+        int canvasH = (int) params.get("canvasHeight");
+        int qrSize = (int) params.get("qrSizePx");
+
+        Map<String, Object> transform = (Map<String, Object>) params.get("transform");
+        double relX = ((Number) transform.get("relX")).doubleValue();
+        double relY = ((Number) transform.get("relY")).doubleValue();
+        double relW = ((Number) transform.get("relW")).doubleValue();
+        double rotation = ((Number) transform.get("rotation")).doubleValue();
+        double opacity = ((Number) transform.get("opacity")).doubleValue();
+
+        // Create empty canvas
+        BufferedImage canvas = new BufferedImage(canvasW, canvasH, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = canvas.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+
+        // ---- 1. Draw transformed background (relative to canvas) ----
+        double bgTargetW = canvasW * relW;
+        double scale = bgTargetW / bgImg.getWidth();
+        double bgTargetH = bgImg.getHeight() * scale;
+
+        double bgX = relX * canvasW;
+        double bgY = relY * canvasH;
+
+        AffineTransform tx = new AffineTransform();
+        tx.translate(bgX, bgY);
+        tx.rotate(Math.toRadians(rotation), bgTargetW / 2.0, bgTargetH / 2.0);
+        tx.scale(scale, scale);
+
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) opacity));
+        g.drawImage(bgImg, tx, null);
+
+        // ---- 2. Draw QR fixed in center ----
+        g.setComposite(AlphaComposite.SrcOver);
+        int qrDrawX = (canvasW - qrSize) / 2;
+        int qrDrawY = (canvasH - qrSize) / 2;
+        g.drawImage(qrImg, qrDrawX, qrDrawY, qrSize, qrSize, null);
+
+        g.dispose();
+        return canvas;
+    }
+
+    // Example run
+    public static void main(String[] args) throws Exception {
+        BufferedImage qr = ImageIO.read(new File("qr.png"));   // sample QR
+        BufferedImage bg = ImageIO.read(new File("bg.png"));   // background
+
+        Map<String, Object> params = Map.of(
+                "canvasWidth", 1024,
+                "canvasHeight", 1024,
+                "qrSizePx", 720,
+                "transform", Map.of(
+                        "relX", 0.10,   // now relative to canvas width
+                        "relY", 0.15,   // relative to canvas height
+                        "relW", 0.8,    // 80% of canvas width
+                        "rotation", 12,
+                        "anchorAx", 0.5,
+                        "anchorAy", 0.5,
+                        "opacity", 0.95
+                )
+        );
+
+        BufferedImage result = compose(qr, bg, params);
+        ImageIO.write(result, "PNG", new File("result.png"));
+    }
+}
