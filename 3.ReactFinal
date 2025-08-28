@@ -1,0 +1,319 @@
+// File: src/App.js
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { Stage, Layer, Image as KonvaImage, Transformer, Rect } from "react-konva";
+
+/* Config */
+const CANVAS_WIDTH = 1024;
+const CANVAS_HEIGHT = 1024;
+const QR_SIZE = 720;
+const QR_URL = "https://api.qrserver.com/v1/create-qr-code/?size=720x720&data=HelloWorld";
+
+/* small hook to load an image from src (handles crossOrigin) */
+function useImage(src) {
+  const [img, setImg] = useState(null);
+  useEffect(() => {
+    if (!src) {
+      setImg(null);
+      return;
+    }
+    const i = new window.Image();
+    i.crossOrigin = "Anonymous";
+    i.src = src;
+    const onLoad = () => setImg(i);
+    const onErr = () => setImg(null);
+    i.addEventListener("load", onLoad);
+    i.addEventListener("error", onErr);
+    return () => {
+      i.removeEventListener("load", onLoad);
+      i.removeEventListener("error", onErr);
+    };
+  }, [src]);
+  return img;
+}
+
+export default function App() {
+  const qrImage = useImage(QR_URL);
+
+  const [bgSrc, setBgSrc] = useState(null);         // data URL or object URL
+  const [bgImage, setBgImage] = useState(null);     // HTMLImageElement
+  const [selected, setSelected] = useState(false);
+  const [params, setParams] = useState(null);
+
+  const bgRef = useRef();
+  const trRef = useRef();
+
+  // Load background from uploaded file
+  const handleFile = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    setBgSrc(url);
+  };
+
+  useEffect(() => {
+    if (!bgSrc) {
+      setBgImage(null);
+      return;
+    }
+    const i = new window.Image();
+    i.crossOrigin = "Anonymous";
+    i.src = bgSrc;
+    i.onload = () => setBgImage(i);
+    i.onerror = () => setBgImage(null);
+    return () => {
+      // revoke object URL to avoid leaks
+      try { URL.revokeObjectURL(bgSrc); } catch (e) {}
+    };
+  }, [bgSrc]);
+
+  // Attach transformer whenever selected toggles
+  useEffect(() => {
+    if (trRef.current && bgRef.current) {
+      if (selected) {
+        trRef.current.nodes([bgRef.current]);
+        trRef.current.getLayer().batchDraw();
+      } else {
+        trRef.current.nodes([]);
+        trRef.current.getLayer().batchDraw();
+      }
+    }
+  }, [selected, bgImage]);
+
+  // compute params (canvas-relative), safe-guard node absence
+  const computeParamsFromNode = useCallback(() => {
+    const node = bgRef.current;
+    if (!node) return null;
+
+    // absolute pos of top-left of the node (Konva uses shape.x/y as absolute by default)
+    const pos = node.position();
+    const scaleX = node.scaleX() || 1;
+    const scaleY = node.scaleY() || 1;
+    const widthPx = node.width() * scaleX;
+    const heightPx = node.height() * scaleY;
+    const rotation = node.rotation() || 0;
+    const opacity = node.opacity() == null ? 1 : node.opacity();
+
+    const relX = pos.x / CANVAS_WIDTH;
+    const relY = pos.y / CANVAS_HEIGHT;
+    const relW = widthPx / CANVAS_WIDTH;
+
+    const payload = {
+      canvasWidth: CANVAS_WIDTH,
+      canvasHeight: CANVAS_HEIGHT,
+      qrSizePx: QR_SIZE,
+      transform: {
+        relX: Number(relX.toFixed(6)),
+        relY: Number(relY.toFixed(6)),
+        relW: Number(relW.toFixed(6)),
+        rotation: Number(rotation.toFixed(3)),
+        anchorAx: 0.5,
+        anchorAy: 0.5,
+        opacity: Number(opacity.toFixed(3)),
+      },
+      // optional debug extras
+      debug: {
+        bgX: Math.round(pos.x),
+        bgY: Math.round(pos.y),
+        bgWidthPx: Math.round(widthPx),
+        bgHeightPx: Math.round(heightPx),
+      },
+    };
+
+    return payload;
+  }, []);
+
+  // update params live on interactions
+  const updateParams = useCallback(() => {
+    const p = computeParamsFromNode();
+    if (p) setParams(p);
+  }, [computeParamsFromNode]);
+
+  // Also update with interval for continuous preview (optional)
+  useEffect(() => {
+    if (!bgImage) {
+      setParams(null);
+      return;
+    }
+    updateParams();
+    const id = setInterval(() => updateParams(), 200); // 200ms live update
+    return () => clearInterval(id);
+  }, [bgImage, updateParams]);
+
+  // Export button: copies JSON to clipboard and shows alert
+  const handleExport = async () => {
+    const p = computeParamsFromNode();
+    if (!p) {
+      alert("No background selected to export.");
+      return;
+    }
+    const json = JSON.stringify(p, null, 2);
+    try {
+      await navigator.clipboard.writeText(json);
+      alert("Params copied to clipboard. Also logged to console.");
+    } catch {
+      // fallback
+      alert("Could not copy to clipboard; see console output.");
+    }
+    console.log("Exported params:", json);
+  };
+
+  // Send to backend (optional) - demonstrates multipart form send
+  const handleSendToBackend = async () => {
+    const p = computeParamsFromNode();
+    if (!p) {
+      alert("No background to send.");
+      return;
+    }
+
+    // fetch blobs for qr and bg (qr from public API)
+    try {
+      const qrResp = await fetch(QR_URL, { mode: "cors" });
+      const qrBlob = await qrResp.blob();
+
+      // fetch bg from object URL (we set crossOrigin to anonymous when loading)
+      const bgResp = await fetch(bgSrc, { mode: "cors" });
+      const bgBlob = await bgResp.blob();
+
+      const fd = new FormData();
+      fd.append("qr", qrBlob, "qr.png");
+      fd.append("bg", bgBlob, "bg.png");
+      fd.append("params", JSON.stringify(p));
+
+      const res = await fetch("http://localhost:8080/api/compose", {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) throw new Error("Server error " + res.status);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to send to backend: " + err.message);
+    }
+  };
+
+  return (
+    <div style={{ padding: 16, fontFamily: "system-ui, Arial" }}>
+      <h2>QR Composer (Canvas-relative) — Live JSON debug</h2>
+
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
+        <label style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+          Upload background:
+          <input type="file" accept="image/*" onChange={handleFile} style={{ marginLeft: 8 }} />
+        </label>
+
+        <button onClick={handleExport} disabled={!bgImage}>Copy JSON</button>
+        <button onClick={handleSendToBackend} disabled={!bgImage}>Send to backend</button>
+
+        <div style={{ marginLeft: "auto", color: "#666", fontSize: 13 }}>
+          Canvas: {CANVAS_WIDTH}×{CANVAS_HEIGHT} • QR size: {QR_SIZE}px (fixed center)
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+        <div style={{ border: "1px solid #ccc" }}>
+          <Stage
+            width={CANVAS_WIDTH}
+            height={CANVAS_HEIGHT}
+            style={{ background: "#fff", display: "block" }}
+            onMouseDown={(e) => {
+              // deselect if clicked on empty area
+              const clickedOnEmpty = e.target === e.target.getStage();
+              if (clickedOnEmpty) setSelected(false);
+            }}
+          >
+            <Layer>
+              {/* background image (draggable/selectable) */}
+              {bgImage && (
+                <>
+                  <KonvaImage
+                    image={bgImage}
+                    ref={bgRef}
+                    x={CANVAS_WIDTH * 0.1}
+                    y={CANVAS_HEIGHT * 0.1}
+                    width={CANVAS_WIDTH * 0.5}
+                    draggable
+                    opacity={0.95}
+                    onDragMove={updateParams}
+                    onDragEnd={updateParams}
+                    onTransformEnd={updateParams}
+                    onTransformMove={updateParams}
+                    onClick={() => setSelected(true)}
+                    onTap={() => setSelected(true)}
+                    // allow transforms to change scale; width is original pixel width prop
+                  />
+                  <Transformer
+                    ref={trRef}
+                    rotateEnabled={true}
+                    enabledAnchors={[
+                      "top-left",
+                      "top-right",
+                      "bottom-left",
+                      "bottom-right",
+                      "middle-left",
+                      "middle-right",
+                      "top-center",
+                      "bottom-center",
+                    ]}
+                    boundBoxFunc={(oldBox, newBox) => {
+                      // optional: prevent negative or too small sizes
+                      if (newBox.width < 20 || newBox.height < 20) return oldBox;
+                      return newBox;
+                    }}
+                  />
+                </>
+              )}
+
+              {/* QR fixed in center */}
+              {qrImage && (
+                <KonvaImage
+                  image={qrImage}
+                  x={(CANVAS_WIDTH - QR_SIZE) / 2}
+                  y={(CANVAS_HEIGHT - QR_SIZE) / 2}
+                  width={QR_SIZE}
+                  height={QR_SIZE}
+                  listening={false}
+                />
+              )}
+
+              {/* QR debug outline */}
+              <Rect
+                x={(CANVAS_WIDTH - QR_SIZE) / 2}
+                y={(CANVAS_HEIGHT - QR_SIZE) / 2}
+                width={QR_SIZE}
+                height={QR_SIZE}
+                stroke="rgba(220,40,40,0.95)"
+                dash={[10, 6]}
+                strokeWidth={2}
+                listening={false}
+              />
+            </Layer>
+          </Stage>
+        </div>
+
+        {/* Live JSON panel */}
+        <div style={{ width: 420 }}>
+          <h3 style={{ marginTop: 0 }}>Live JSON params</h3>
+          <div style={{
+            background: "#111",
+            color: "#dff",
+            padding: 12,
+            borderRadius: 6,
+            fontFamily: "monospace",
+            fontSize: 13,
+            height: 520,
+            overflow: "auto",
+            whiteSpace: "pre-wrap"
+          }}>
+            {params ? JSON.stringify(params, null, 2) : "// No background image loaded yet"}
+          </div>
+
+          <div style={{ marginTop: 8, color: "#666", fontSize: 13 }}>
+            Click background to select it (show handles). Drag/resize/rotate — JSON updates live.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
