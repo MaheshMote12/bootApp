@@ -1,6 +1,6 @@
 // File: src/App.js
 import React, { useState, useRef, useEffect } from "react";
-import { Stage, Layer, Image as KonvaImage } from "react-konva";
+import { Stage, Layer, Image as KonvaImage, Transformer } from "react-konva";
 
 const CANVAS_WIDTH = 1024;
 const CANVAS_HEIGHT = 1024;
@@ -9,12 +9,15 @@ const QR_SIZE = 720;
 function App() {
   const [qr, setQr] = useState(null);
   const [bg, setBg] = useState(null);
-  const bgRef = useRef();
+  const [params, setParams] = useState(null);
 
-  // Load sample QR image (or replace with upload)
+  const bgRef = useRef();
+  const trRef = useRef();
+
+  // Load sample QR image (put qr.png into public/)
   useEffect(() => {
     const img = new window.Image();
-    img.src = "/qr.png"; // put sample qr.png into public/
+    img.src = process.env.PUBLIC_URL + "/qr.png";
     img.onload = () => setQr(img);
   }, []);
 
@@ -27,28 +30,25 @@ function App() {
     img.onload = () => setBg(img);
   };
 
-  const exportParams = () => {
-    if (!bgRef.current) return;
-
+  const computeParams = () => {
+    if (!bgRef.current) return null;
     const node = bgRef.current;
+
     const absPos = node.getAbsolutePosition();
     const scaleX = node.scaleX();
+    const scaleY = node.scaleY();
     const rotation = node.rotation();
     const opacity = node.opacity();
 
     const qrX = (CANVAS_WIDTH - QR_SIZE) / 2;
     const qrY = (CANVAS_HEIGHT - QR_SIZE) / 2;
 
-    // Background dimensions on canvas
     const w = node.width() * scaleX;
-    const h = node.height() * node.scaleY();
-
-    // Top-left relative to QR box
     const relX = (absPos.x - qrX) / QR_SIZE;
     const relY = (absPos.y - qrY) / QR_SIZE;
     const relW = w / QR_SIZE;
 
-    const params = {
+    return {
       canvasWidth: CANVAS_WIDTH,
       canvasHeight: CANVAS_HEIGHT,
       qrSizePx: QR_SIZE,
@@ -62,23 +62,28 @@ function App() {
         opacity,
       },
     };
-
-    console.log("Exported params:", params);
-    return params;
   };
 
+  // Keep JSON live updated
+  useEffect(() => {
+    const anim = setInterval(() => {
+      const p = computeParams();
+      if (p) setParams(p);
+    }, 300);
+    return () => clearInterval(anim);
+  }, [bg]);
+
   const handleSubmit = async () => {
-    const params = exportParams();
-    if (!params || !qr || !bg) return;
+    const p = computeParams();
+    if (!p || !qr || !bg) return;
 
     const form = new FormData();
-    // here we only have frontend images, but in real app you would upload actual QR file
     const qrBlob = await fetch(qr.src).then((r) => r.blob());
     const bgBlob = await fetch(bg.src).then((r) => r.blob());
 
     form.append("qr", qrBlob, "qr.png");
     form.append("bg", bgBlob, "bg.png");
-    form.append("params", JSON.stringify(params));
+    form.append("params", JSON.stringify(p));
 
     const res = await fetch("http://localhost:8080/api/compose", {
       method: "POST",
@@ -96,7 +101,11 @@ function App() {
       <input type="file" accept="image/*" onChange={handleBgUpload} />
       <button onClick={handleSubmit}>Send to Backend</button>
 
-      <Stage width={CANVAS_WIDTH} height={CANVAS_HEIGHT} style={{ border: "1px solid black" }}>
+      <Stage
+        width={CANVAS_WIDTH}
+        height={CANVAS_HEIGHT}
+        style={{ border: "1px solid black", marginTop: "1rem" }}
+      >
         <Layer>
           {qr && (
             <KonvaImage
@@ -108,18 +117,34 @@ function App() {
             />
           )}
           {bg && (
-            <KonvaImage
-              image={bg}
-              ref={bgRef}
-              x={CANVAS_WIDTH / 2 - bg.width / 4}
-              y={CANVAS_HEIGHT / 2 - bg.height / 4}
-              width={bg.width / 2}
-              height={bg.height / 2}
-              draggable
-            />
+            <>
+              <KonvaImage
+                image={bg}
+                ref={bgRef}
+                x={CANVAS_WIDTH / 2 - bg.width / 4}
+                y={CANVAS_HEIGHT / 2 - bg.height / 4}
+                width={bg.width / 2}
+                height={bg.height / 2}
+                draggable
+                onClick={() => {
+                  trRef.current.nodes([bgRef.current]);
+                  trRef.current.getLayer().batchDraw();
+                }}
+                onTap={() => {
+                  trRef.current.nodes([bgRef.current]);
+                  trRef.current.getLayer().batchDraw();
+                }}
+              />
+              <Transformer ref={trRef} />
+            </>
           )}
         </Layer>
       </Stage>
+
+      <h3>Debug JSON</h3>
+      <pre style={{ background: "#f4f4f4", padding: "1rem" }}>
+        {params ? JSON.stringify(params, null, 2) : "{}"}
+      </pre>
     </div>
   );
 }
