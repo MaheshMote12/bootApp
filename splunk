@@ -1,4 +1,16 @@
 index=your_index sourcetype=tsys:recurring_gateway ("TransitIRestClient.java:167" OR "TransitIRestClient.java:170")
+| rex "threadId=(?<threadId>\w+)"
+| eval logPoint=if(match(_raw,"TransitIRestClient.java:167"),"start","end")
+| stats earliest(_time) as start latest(_time) as end by threadId
+| eval response_time=end-start
+| where response_time>=0
+| table threadId start end response_time
+
+
+
+
+
+index=your_index sourcetype=tsys:recurring_gateway ("TransitIRestClient.java:167" OR "TransitIRestClient.java:170")
 | rex "threadId=(?<threadId>[^ ]+)" 
 | eval event_type=if(searchmatch("TransitIRestClient.java:167"), "start", "end")
 | stats earliest(_time) as start latest(_time) as end by threadId
