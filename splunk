@@ -2,6 +2,19 @@ index=your_index sourcetype=tsys:recurring_gateway ("TransitIRestClient.java:167
 | rex "threadId=(?<threadId>\w+)"
 | eval logPoint=if(match(_raw,"TransitIRestClient.java:167"),"start","end")
 | stats earliest(_time) as start latest(_time) as end by threadId
+| eval response_time_ms=(end-start)*1000
+| where response_time_ms>=0
+| sort start
+| table start threadId response_time_ms
+| appendpipe [ stats avg(response_time_ms) as avg_response_time_ms | eval start="---", threadId="AVERAGE" | table start threadId avg_response_time_ms ]
+
+
+
+
+index=your_index sourcetype=tsys:recurring_gateway ("TransitIRestClient.java:167" OR "TransitIRestClient.java:170")
+| rex "threadId=(?<threadId>\w+)"
+| eval logPoint=if(match(_raw,"TransitIRestClient.java:167"),"start","end")
+| stats earliest(_time) as start latest(_time) as end by threadId
 | eval response_time=end-start
 | where response_time>=0
 | table threadId start end response_time
