@@ -1,5 +1,19 @@
 
 index=your_index sourcetype=tsys:recurring_gateway ("TransitIRestClient.java:167" OR "TransitIRestClient.java:170")
+| rex "threadId=(?<threadId>\w+)"
+| eval marker=if(match(_raw,"TransitIRestClient.java:167"),"start","end")
+| streamstats current=f last(_time) as prev_time last(marker) as prev_marker last(threadId) as prev_threadId
+| where marker="end" AND prev_marker="start"
+| eval response_time_ms=round((_time - prev_time)*1000,2)
+| table prev_time _time prev_threadId threadId response_time_ms
+| rename prev_time as request_time _time as response_time prev_threadId as request_threadId threadId as response_threadId
+| appendpipe [ stats avg(response_time_ms) as avg_response_time_ms | eval request_time="---", response_time="---", request_threadId="---", response_threadId="AVERAGE" ]
+
+
+
+
+
+index=your_index sourcetype=tsys:recurring_gateway ("TransitIRestClient.java:167" OR "TransitIRestClient.java:170")
 | eval marker=if(match(_raw,"TransitIRestClient.java:167"),"start","end")
 | streamstats current=f last(_time) as prev_time last(marker) as prev_marker
 | where marker="end" AND prev_marker="start"
