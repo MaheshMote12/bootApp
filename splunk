@@ -1,13 +1,6 @@
-index=your_index sourcetype=tsys:recurring_gateway "TransitIRestClient.java:167" OR "TransitIRestClient.java:170"
-| transaction threadId startswith="TransitIRestClient.java:167" endswith="TransitIRestClient.java:170"
-| eval response_time=duration
-| stats avg(response_time) as avg_response_time, max(response_time) as max_response_time, min(response_time) as min_response_time
-
-
-
 index=your_index sourcetype=tsys:recurring_gateway ("TransitIRestClient.java:167" OR "TransitIRestClient.java:170")
-| rex "threadId=<(?<threadId>[^>]+)>"
+| rex "threadId=(?<threadId>[^ ]+)" 
 | eval event_type=if(searchmatch("TransitIRestClient.java:167"), "start", "end")
 | stats earliest(_time) as start latest(_time) as end by threadId
 | eval response_time=end-start
-| stats avg(response_time) as avg_response_time, max(response_time), min(response_time)
+| stats avg(response_time) as avg_response_time, max(response_time) as max_response_time, min(response_time) as min_response_time
