@@ -1,0 +1,25 @@
+class Box {
+    int value;
+}
+
+public class CallByValueTest {
+    public static void main(String[] args) {
+        Box b = new Box();
+        b.value = 10;
+
+        changeRef(b);
+        System.out.println("After changeRef: " + b.value);
+
+        changeValue(b);
+        System.out.println("After changeValue: " + b.value);
+    }
+
+    static void changeRef(Box box) {
+        box = new Box();     // reassign local reference
+        box.value = 20;
+    }
+
+    static void changeValue(Box box) {
+        box.value = 30;      // modify object state
+    }
+}
