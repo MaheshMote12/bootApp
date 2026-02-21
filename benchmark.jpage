@@ -1,0 +1,325 @@
+root pom
+
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.example</groupId>
+    <artifactId>image-transfer-poc</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+
+    <modules>
+        <module>app</module>
+        <module>benchmark</module>
+        <module>load-test</module>
+    </modules>
+
+    <properties>
+        <java.version>17</java.version>
+        <spring.boot.version>3.2.0</spring.boot.version>
+        <jmh.version>1.37</jmh.version>
+    </properties>
+
+</project>
+
+
+App Module 
+
+<project>
+    <parent>
+        <groupId>com.example</groupId>
+        <artifactId>image-transfer-poc</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>app</artifactId>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <version>${spring.boot.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring.boot.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+
+package com.example.app;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class Application {
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}
+
+
+
+package com.example.app;
+
+import org.springframework.http.*;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+
+import java.io.OutputStream;
+import java.security.SecureRandom;
+import java.util.Base64;
+
+@RestController
+@RequestMapping("/benchmark")
+public class StreamingController {
+
+    private static final SecureRandom RANDOM = new SecureRandom();
+    private static final int CHUNK = 8192;
+
+    private void writeRandom(OutputStream os, long total) throws Exception {
+        byte[] buffer = new byte[CHUNK];
+        long written = 0;
+        while (written < total) {
+            int size = (int) Math.min(CHUNK, total - written);
+            RANDOM.nextBytes(buffer);
+            os.write(buffer, 0, size);
+            written += size;
+        }
+    }
+
+    @GetMapping("/binary-stream/{sizeMb}")
+    public ResponseEntity<StreamingResponseBody> binary(@PathVariable int sizeMb) {
+        long total = (long) sizeMb * 1024 * 1024;
+
+        StreamingResponseBody stream = os -> writeRandom(os, total);
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .contentLength(total)
+                .body(stream);
+    }
+
+    @GetMapping("/base64-stream/{sizeMb}")
+    public ResponseEntity<StreamingResponseBody> base64(@PathVariable int sizeMb) {
+        long total = (long) sizeMb * 1024 * 1024;
+
+        StreamingResponseBody stream = os -> {
+            try (OutputStream wrapped = Base64.getEncoder().wrap(os)) {
+                writeRandom(wrapped, total);
+            }
+        };
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.TEXT_PLAIN)
+                .body(stream);
+    }
+}
+
+
+
+
+JMH MODULE 
+
+
+<project>
+    <parent>
+        <groupId>com.example</groupId>
+        <artifactId>image-transfer-poc</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>benchmark</artifactId>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.openjdk.jmh</groupId>
+            <artifactId>jmh-core</artifactId>
+            <version>${jmh.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.openjdk.jmh</groupId>
+            <artifactId>jmh-generator-annprocess</artifactId>
+            <version>${jmh.version}</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.4.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <finalName>benchmarks</finalName>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>org.openjdk.jmh.Main</mainClass>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+
+
+
+
+
+package com.example.benchmark;
+
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.infra.Blackhole;
+
+import java.security.SecureRandom;
+import java.util.Base64;
+import java.util.concurrent.TimeUnit;
+
+@BenchmarkMode({Mode.AverageTime, Mode.Throughput})
+@OutputTimeUnit(TimeUnit.MILLISECONDS)
+@State(Scope.Thread)
+public class Base64Benchmark {
+
+    @Param({"5"})
+    int sizeMb;
+
+    byte[] data;
+    String encoded;
+
+    @Setup
+    public void setup() {
+        data = new byte[sizeMb * 1024 * 1024];
+        new SecureRandom().nextBytes(data);
+        encoded = Base64.getEncoder().encodeToString(data);
+    }
+
+    @Benchmark
+    public void binaryCopy(Blackhole bh) {
+        bh.consume(data.clone());
+    }
+
+    @Benchmark
+    public void base64Encode(Blackhole bh) {
+        bh.consume(Base64.getEncoder().encodeToString(data));
+    }
+
+    @Benchmark
+    public void base64Decode(Blackhole bh) {
+        bh.consume(Base64.getDecoder().decode(encoded));
+    }
+}
+
+
+
+
+GATLING MODULE 
+
+
+
+<project>
+    <parent>
+        <groupId>com.example</groupId>
+        <artifactId>image-transfer-poc</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>load-test</artifactId>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.gatling</groupId>
+            <artifactId>gatling-java</artifactId>
+            <version>3.9.5</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>io.gatling</groupId>
+                <artifactId>gatling-maven-plugin</artifactId>
+                <version>4.5.0</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+
+
+
+package com.example.load;
+
+import io.gatling.javaapi.core.*;
+import io.gatling.javaapi.http.*;
+
+import static io.gatling.javaapi.core.CoreDsl.*;
+import static io.gatling.javaapi.http.HttpDsl.*;
+
+public class ImageSimulation extends Simulation {
+
+    HttpProtocolBuilder http = http.baseUrl("http://localhost:8080");
+
+    ScenarioBuilder binary = scenario("Binary")
+            .exec(http("Binary")
+                    .get("/benchmark/binary-stream/5"));
+
+    ScenarioBuilder base64 = scenario("Base64")
+            .exec(http("Base64")
+                    .get("/benchmark/base64-stream/5"));
+
+    {
+        setUp(
+                binary.injectOpen(rampUsers(100).during(30)),
+                base64.injectOpen(rampUsers(100).during(30))
+        ).protocols(http);
+    }
+}
+
+
+
+how to run 
+
+star seever 
+
+
+cd app
+mvn spring-boot:run
+
+
+RUN CPU BEMCHMARK 
+
+
+cd benchmark
+mvn clean package
+java -jar target/benchmarks.jar -prof gc
+
+
+RUN HTTP BEMCHMARK 
+
+
+cd load-test
+mvn gatling:test
+
+
+
+
+
+
