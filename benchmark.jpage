@@ -321,5 +321,95 @@ mvn gatling:test
 
 
 
+// file: src/test/java/com/example/Base64MemoryTest.java
+package com.example;
+
+import org.junit.jupiter.api.Test;
+
+import java.util.Base64;
+import java.util.Random;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+public class Base64MemoryTest {
+
+    private static final int FILE_SIZE = 32 * 1024 * 1024; // 32MB
+
+    @Test
+    void shouldIncreaseSizeByApproximately33Percent() {
+        byte[] original = generateRandomBytes(FILE_SIZE);
+
+        byte[] encoded = Base64.getEncoder().encode(original);
+
+        double increase =
+                ((double) (encoded.length - original.length) / original.length) * 100;
+
+        System.out.println("Original size: " + original.length);
+        System.out.println("Base64 size : " + encoded.length);
+        System.out.println("Increase %  : " + increase);
+
+        assertTrue(increase > 32 && increase < 35);
+    }
+
+    @Test
+    void shouldShowRealHeapDifference() throws InterruptedException {
+
+        forceGc();
+        long beforeRaw = usedHeap();
+
+        byte[] original = generateRandomBytes(FILE_SIZE);
+
+        forceGc();
+        long afterRaw = usedHeap();
+
+        byte[] encoded = Base64.getEncoder().encode(original);
+
+        forceGc();
+        long afterBase64Bytes = usedHeap();
+
+        String base64String = Base64.getEncoder().encodeToString(original);
+
+        forceGc();
+        long afterBase64String = usedHeap();
+
+        System.out.println("Heap Before Allocation      : " + beforeRaw);
+        System.out.println("Heap After Raw 32MB         : " + afterRaw);
+        System.out.println("Heap After Base64 byte[]    : " + afterBase64Bytes);
+        System.out.println("Heap After Base64 String    : " + afterBase64String);
+
+        System.out.println("Raw allocation diff         : " + (afterRaw - beforeRaw));
+        System.out.println("Base64 byte[] diff          : " + (afterBase64Bytes - afterRaw));
+        System.out.println("Base64 String extra diff    : " + (afterBase64String - afterBase64Bytes));
+
+        assertTrue(afterBase64Bytes > afterRaw);
+        assertTrue(afterBase64String > afterBase64Bytes);
+    }
+
+    private byte[] generateRandomBytes(int size) {
+        byte[] data = new byte[size];
+        new Random().nextBytes(data);
+        return data;
+    }
+
+    private long usedHeap() {
+        Runtime runtime = Runtime.getRuntime();
+        return runtime.totalMemory() - runtime.freeMemory();
+    }
+
+    private void forceGc() throws InterruptedException {
+        System.gc();
+        Thread.sleep(500); // allow GC stabilization
+    }
+}
+
+
+<dependency>
+    <groupId>org.junit.jupiter</groupId>
+    <artifactId>junit-jupiter</artifactId>
+    <version>5.10.0</version>
+    <scope>test</scope>
+</dependency>
+
+
 
 
